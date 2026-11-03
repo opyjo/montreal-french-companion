@@ -1,0 +1,352 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// This security rules file assumes the following data structures for
+// the "Faque" Montreal Dev French Companion web application:
+//
+// 1. Collection: /users/{userId}
+//    Document ID: {userId} (must match request.auth.uid)
+//    Fields:
+//      - displayName: string (optional/nullable, max 100 chars) - User display name
+//      - xp: number (required, >= 0, <= 100000000) - Total experience points
+//      - streak: number (required, >= 0, <= 100000) - Current daily study streak
+//      - updatedAt: timestamp | string | number (required) - Last update timestamp
+//      - createdAt: timestamp | string | number (optional, immutable) - Account creation timestamp
+//      - lastStudyDate: string (optional, max 64 chars) - Last active date string
+//      - email: string (optional/nullable, max 254 chars) - Owner email (PII, owner-only read)
+//      - photoURL: string (optional/nullable, max 2048 chars) - Owner avatar URL
+//      - uid: string (optional, immutable, must match userId) - User UID
+//
+// 2. Subcollection: /users/{userId}/cards/{cardId}
+//    Document ID: {cardId}
+//    Fields:
+//      - id: string (optional, immutable, max 128 chars) - Card identifier
+//      - french: string (required, 1..1000 chars) - Quebecois/French term or phrase
+//      - english: string (required, 1..1000 chars) - English meaning
+//      - quebecoisNote: string (required/optional, 0..2000 chars) - Cultural/regional usage note
+//      - phonetic: string (required/optional, 0..500 chars) - Phonetic pronunciation guide
+//      - category: string (required/optional, 0..100 chars) - Thematic category
+//      - exampleFr: string (required/optional, 0..2000 chars) - French example sentence
+//      - exampleEn: string (required/optional, 0..2000 chars) - English example translation
+//      - interval: number (required, >= 0, <= 36500) - SRS interval in days
+//      - repetition: number (required, >= 0, <= 100000) - SRS repetition count
+//      - easeFactor: number (required, >= 1.0, <= 10.0) - SM-2 ease factor
+//      - nextReviewAt: timestamp | string | number (required) - Next scheduled SRS review
+//      - updatedAt: timestamp | string | number (required) - Last review/modification timestamp
+//      - createdAt: timestamp | string | number (optional, immutable) - Creation timestamp
+//
+// 3. Subcollection: /users/{userId}/standups/{standupId}
+//    Document ID: {standupId}
+//    Fields:
+//      - id: string (optional, immutable, max 128 chars) - Standup script identifier
+//      - yesterdayEn: string (required, 0..5000 chars) - Yesterday's update in English
+//      - todayEn: string (required, 0..5000 chars) - Today's plan in English
+//      - blockersEn: string (required, 0..5000 chars) - Blockers in English
+//      - beginnerFr: string (required, 1..8000 chars) - Beginner French standup translation
+//      - franglaisFr: string (required, 1..8000 chars) - Montreal Tech Franglais translation
+//      - proFr: string (required, 1..8000 chars) - Professional Quebecois French translation
+//      - tips: list<string> (max 25 items) or string (0..5000 chars) (required) - Coaching tips
+//      - createdAt: timestamp | string | number (required, immutable) - Creation timestamp
+//      - updatedAt: timestamp | string | number (optional) - Update timestamp
+//
+// 4. Subcollection: /users/{userId}/decodes/{decodeId}
+//    Document ID: {decodeId}
+//    Fields:
+//      - id: string (optional, immutable, max 128 chars) - Decode entry identifier
+//      - original: string (required, 1..3000 chars) - Original Quebecois/meeting phrase
+//      - meaningEn: string (required, 1..5000 chars) - English meaning
+//      - standardFr: string (required, 1..5000 chars) - Standard French equivalent
+//      - breakdown: string (0..8000 chars) or list (max 30 items) (required) - Expression breakdown
+//      - register: string (required, 1..200 chars) - Sociolinguistic register
+//      - createdAt: timestamp | string | number (required, immutable) - Creation timestamp
+//      - updatedAt: timestamp | string | number (optional) - Update timestamp
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if authenticated user owns the resource path
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Verify optional uid field matches the authenticated user on create
+    function uidUnchanged(userId) {
+      return !('uid' in request.resource.data) ||
+        (request.resource.data.uid is string && request.resource.data.uid == userId);
+    }
+
+    // Ensure uid field is not modified on update
+    function uidNotModified() {
+      return !('uid' in request.resource.data) ||
+        !('uid' in resource.data) ||
+        request.resource.data.uid == resource.data.uid;
+    }
+
+    // Validate required fields exist on the resulting document
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // Validate that the document contains only explicitly allowed fields
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // Validate that immutable fields are not modified during an update
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // Validate string length bounds
+    function validString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    // Validate optional or nullable string field
+    function isValidOptionalString(data, field, minLen, maxLen) {
+      return !(field in data) ||
+        data[field] == null ||
+        validString(data[field], minLen, maxLen);
+    }
+
+    // Validate timestamp, ISO date string (bounded length), or epoch millis
+    function isValidTimeValue(val) {
+      return val is timestamp ||
+        (val is string && val.size() >= 4 && val.size() <= 64) ||
+        (val is number && val >= 0 && val <= 9999999999999);
+    }
+
+    // Validate optional timestamp/date field
+    function isValidOptionalTime(data, field) {
+      return !(field in data) || data[field] == null || isValidTimeValue(data[field]);
+    }
+
+    // Validate a list of strings or bounded objects (checks size limit and head element bounds)
+    function isValidTipsField(tips) {
+      return validString(tips, 0, 5000) ||
+        (tips is list &&
+         tips.size() <= 25 &&
+         (tips.size() == 0 || validString(tips[0], 0, 1000)));
+    }
+
+    // Validate breakdown field (can be bounded string or bounded list of strings/maps)
+    function isValidBreakdownField(breakdown) {
+      return validString(breakdown, 0, 8000) ||
+        (breakdown is list &&
+         breakdown.size() <= 30 &&
+         (breakdown.size() == 0 ||
+          validString(breakdown[0], 0, 1000) ||
+          (breakdown[0] is map && breakdown[0].keys().size() <= 10)));
+    }
+
+    // ===============================================================
+    // Domain Validators (Used in BOTH create and update rules)
+    // ===============================================================
+
+    function isValidUserProfile(data, userId) {
+      let allowedFields = [
+        'displayName',
+        'xp',
+        'streak',
+        'updatedAt',
+        'createdAt',
+        'lastStudyDate',
+        'email',
+        'photoURL',
+        'uid'
+      ];
+      return hasOnlyAllowedFields(allowedFields) &&
+        hasRequiredFields(['xp', 'streak', 'updatedAt']) &&
+        isValidOptionalString(data, 'displayName', 0, 100) &&
+        data.xp is number && data.xp >= 0 && data.xp <= 100000000 &&
+        data.streak is number && data.streak >= 0 && data.streak <= 100000 &&
+        isValidTimeValue(data.updatedAt) &&
+        isValidOptionalTime(data, 'createdAt') &&
+        isValidOptionalString(data, 'lastStudyDate', 0, 64) &&
+        isValidOptionalString(data, 'email', 0, 254) &&
+        isValidOptionalString(data, 'photoURL', 0, 2048) &&
+        uidUnchanged(userId);
+    }
+
+    function isValidCard(data) {
+      let allowedFields = [
+        'id',
+        'french',
+        'english',
+        'quebecoisNote',
+        'phonetic',
+        'category',
+        'exampleFr',
+        'exampleEn',
+        'interval',
+        'repetition',
+        'easeFactor',
+        'nextReviewAt',
+        'updatedAt',
+        'createdAt'
+      ];
+      let requiredFields = [
+        'french',
+        'english',
+        'quebecoisNote',
+        'phonetic',
+        'category',
+        'exampleFr',
+        'exampleEn',
+        'interval',
+        'repetition',
+        'easeFactor',
+        'nextReviewAt',
+        'updatedAt'
+      ];
+      return hasOnlyAllowedFields(allowedFields) &&
+        hasRequiredFields(requiredFields) &&
+        isValidOptionalString(data, 'id', 1, 128) &&
+        validString(data.french, 1, 1000) &&
+        validString(data.english, 1, 1000) &&
+        validString(data.quebecoisNote, 0, 2000) &&
+        validString(data.phonetic, 0, 500) &&
+        validString(data.category, 0, 100) &&
+        validString(data.exampleFr, 0, 2000) &&
+        validString(data.exampleEn, 0, 2000) &&
+        data.interval is number && data.interval >= 0 && data.interval <= 36500 &&
+        data.repetition is number && data.repetition >= 0 && data.repetition <= 100000 &&
+        data.easeFactor is number && data.easeFactor >= 1.0 && data.easeFactor <= 10.0 &&
+        isValidTimeValue(data.nextReviewAt) &&
+        isValidTimeValue(data.updatedAt) &&
+        isValidOptionalTime(data, 'createdAt');
+    }
+
+    function isValidStandup(data) {
+      let allowedFields = [
+        'id',
+        'yesterdayEn',
+        'todayEn',
+        'blockersEn',
+        'beginnerFr',
+        'franglaisFr',
+        'proFr',
+        'tips',
+        'createdAt',
+        'updatedAt'
+      ];
+      let requiredFields = [
+        'yesterdayEn',
+        'todayEn',
+        'blockersEn',
+        'beginnerFr',
+        'franglaisFr',
+        'proFr',
+        'tips',
+        'createdAt'
+      ];
+      return hasOnlyAllowedFields(allowedFields) &&
+        hasRequiredFields(requiredFields) &&
+        isValidOptionalString(data, 'id', 1, 128) &&
+        validString(data.yesterdayEn, 0, 5000) &&
+        validString(data.todayEn, 0, 5000) &&
+        validString(data.blockersEn, 0, 5000) &&
+        validString(data.beginnerFr, 1, 8000) &&
+        validString(data.franglaisFr, 1, 8000) &&
+        validString(data.proFr, 1, 8000) &&
+        isValidTipsField(data.tips) &&
+        isValidTimeValue(data.createdAt) &&
+        isValidOptionalTime(data, 'updatedAt');
+    }
+
+    function isValidDecode(data) {
+      let allowedFields = [
+        'id',
+        'original',
+        'meaningEn',
+        'standardFr',
+        'breakdown',
+        'register',
+        'createdAt',
+        'updatedAt'
+      ];
+      let requiredFields = [
+        'original',
+        'meaningEn',
+        'standardFr',
+        'breakdown',
+        'register',
+        'createdAt'
+      ];
+      return hasOnlyAllowedFields(allowedFields) &&
+        hasRequiredFields(requiredFields) &&
+        isValidOptionalString(data, 'id', 1, 128) &&
+        validString(data.original, 1, 3000) &&
+        validString(data.meaningEn, 1, 5000) &&
+        validString(data.standardFr, 1, 5000) &&
+        isValidBreakdownField(data.breakdown) &&
+        validString(data.register, 1, 200) &&
+        isValidTimeValue(data.createdAt) &&
+        isValidOptionalTime(data, 'updatedAt');
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // User profile & stats document
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUserProfile(request.resource.data, userId);
+      allow update: if isOwner(userId) &&
+        isValidUserProfile(request.resource.data, userId) &&
+        uidNotModified() &&
+        areImmutableFieldsUnchanged(['createdAt']);
+      allow delete: if isOwner(userId);
+
+      // SRS Flashcards subcollection
+      match /cards/{cardId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidCard(request.resource.data);
+        allow update: if isOwner(userId) &&
+          isValidCard(request.resource.data) &&
+          areImmutableFieldsUnchanged(['id', 'createdAt']);
+        allow delete: if isOwner(userId);
+      }
+
+      // Saved Standup Scripts subcollection
+      match /standups/{standupId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidStandup(request.resource.data);
+        allow update: if isOwner(userId) &&
+          isValidStandup(request.resource.data) &&
+          areImmutableFieldsUnchanged(['id', 'createdAt']);
+        allow delete: if isOwner(userId);
+      }
+
+      // Decoded Meeting Phrases subcollection
+      match /decodes/{decodeId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidDecode(request.resource.data);
+        allow update: if isOwner(userId) &&
+          isValidDecode(request.resource.data) &&
+          areImmutableFieldsUnchanged(['id', 'createdAt']);
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    // Default deny on all other paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

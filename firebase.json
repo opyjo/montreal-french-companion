@@ -1,0 +1,22 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json",
+    "database": "(default)",
+    "location": "northamerica-northeast1"
+  },
+  "auth": {
+    "providers": {
+      "anonymous": true,
+      "emailPassword": true,
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "Faque Montreal Dev French",
+        "supportEmail": "opyjocodes@gmail.com",
+        "authorizedRedirectUris": [
+          "https://faque-mtl-dev-2026.firebaseapp.com/__/auth/handler",
+          "https://montreal-french-companion.vercel.app"
+        ]
+      }
+    }
+  }
+}
