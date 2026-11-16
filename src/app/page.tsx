@@ -1,33 +1,35 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BookA, Brain, Cloud, CloudOff, Flame, Languages, Library, Settings as SettingsIcon, Sparkles } from "lucide-react";
+import { BookA, Cloud, CloudOff, Flame, Library, Settings as SettingsIcon, Sparkles, Sun } from "lucide-react";
 import { isDue } from "@/lib/srs";
 import { useStudyData } from "@/lib/useStudyData";
 import { useSettings } from "@/lib/useSettings";
 import { useVerbLab } from "@/lib/useVerbLab";
+import { useDailyPlan } from "@/lib/useDailyPlan";
+import { TodayTab } from "@/components/today/TodayTab";
 import { VerbsTab } from "@/components/verbs/VerbsTab";
-import { LookupTab, type LookupState } from "@/components/LookupTab";
+import { WordsHub, type WordsView } from "@/components/WordsHub";
+import { type LookupState } from "@/components/LookupTab";
 import { MistakeTab, type MistakeFormState } from "@/components/MistakeTab";
-import { ReviewTab } from "@/components/ReviewTab";
-import { WordsTab } from "@/components/WordsTab";
 import { SettingsPanel } from "@/components/SettingsPanel";
 
-type Tab = "verbs" | "lookup" | "mistakes" | "review" | "words";
+type Tab = "today" | "verbs" | "words" | "mistakes";
 
-const TABS: { id: Tab; label: string; Icon: typeof Languages }[] = [
+const TABS: { id: Tab; label: string; Icon: typeof Sun }[] = [
+  { id: "today", label: "Today", Icon: Sun },
   { id: "verbs", label: "Verbs", Icon: BookA },
-  { id: "review", label: "Review", Icon: Brain },
-  { id: "lookup", label: "Look up", Icon: Languages },
-  { id: "mistakes", label: "Mistakes", Icon: Sparkles },
   { id: "words", label: "Words", Icon: Library },
+  { id: "mistakes", label: "Mistakes", Icon: Sparkles },
 ];
 
 export default function Home() {
   const data = useStudyData();
   const lab = useVerbLab(data.user, data.mode === "cloud", data.markStudied);
+  const plan = useDailyPlan(data.user, data.mode === "cloud");
   const { settings, update } = useSettings();
-  const [tab, setTab] = useState<Tab>("verbs");
+  const [tab, setTab] = useState<Tab>("today");
+  const [wordsView, setWordsView] = useState<WordsView>("review");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [lookup, setLookup] = useState<LookupState>({ text: "", tag: "", result: null });
   const [mistake, setMistake] = useState<MistakeFormState>({
@@ -37,11 +39,14 @@ export default function Home() {
     current: null,
   });
 
-  // Remember the last tab between visits.
+  // Remember the last tab between visits (older saved tabs map into Words).
   useEffect(() => {
     try {
-      const t = localStorage.getItem("dl_tab") as Tab | null;
-      if (t && TABS.some((x) => x.id === t)) setTab(t);
+      const t = localStorage.getItem("dl_tab");
+      if (t === "review" || t === "lookup") {
+        setTab("words");
+        setWordsView(t);
+      } else if (t && TABS.some((x) => x.id === t)) setTab(t as Tab);
     } catch {
       // ignore
     }
@@ -61,8 +66,10 @@ export default function Home() {
     const t = setInterval(() => setNow(Date.now()), 60000);
     return () => clearInterval(t);
   }, []);
-  const dueCount = useMemo(() => data.words.filter((w) => isDue(w, now)).length, [data.words, now]);
-  const badge = (id: Tab) => (id === "review" ? dueCount : id === "verbs" ? lab.dueCount : 0);
+  // Date.now() (not the minute tick) so freshly saved words count straight away.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const dueCount = useMemo(() => data.words.filter((w) => isDue(w, Date.now())).length, [data.words, now]);
+  const badge = (id: Tab) => (id === "words" ? dueCount : id === "verbs" ? lab.dueCount : 0);
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-2xl flex-col">
@@ -120,15 +127,32 @@ export default function Home() {
       </header>
 
       <main className="flex-1 px-4 pt-4 pb-28 sm:pb-10">
-        {tab === "lookup" && (
-          <LookupTab data={data} settings={settings} state={lookup} setState={setLookup} onGoReview={() => go("review")} />
-        )}
-        {tab === "mistakes" && <MistakeTab data={data} settings={settings} state={mistake} setState={setMistake} />}
-        {tab === "review" && (
-          <ReviewTab data={data} settings={settings} updateSettings={update} onGoLookup={() => go("lookup")} />
+        {tab === "today" && (
+          <TodayTab
+            data={data}
+            lab={lab}
+            settings={settings}
+            plan={plan}
+            onGo={(t) => {
+              if (t === "words") setWordsView("lookup");
+              go(t);
+            }}
+          />
         )}
         {tab === "verbs" && <VerbsTab lab={lab} settings={settings} />}
-        {tab === "words" && <WordsTab data={data} settings={settings} onGoLookup={() => go("lookup")} />}
+        {tab === "words" && (
+          <WordsHub
+            view={wordsView}
+            setView={setWordsView}
+            data={data}
+            settings={settings}
+            updateSettings={update}
+            lookup={lookup}
+            setLookup={setLookup}
+            dueCount={dueCount}
+          />
+        )}
+        {tab === "mistakes" && <MistakeTab data={data} settings={settings} state={mistake} setState={setMistake} />}
       </main>
 
       {/* Mobile bottom tabs */}
@@ -136,7 +160,7 @@ export default function Home() {
         className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden"
         aria-label="Sections"
       >
-        <div className="mx-auto grid max-w-2xl grid-cols-5">
+        <div className="mx-auto grid max-w-2xl" style={{ gridTemplateColumns: `repeat(${TABS.length}, minmax(0, 1fr))` }}>
           {TABS.map(({ id, label, Icon }) => (
             <button
               key={id}

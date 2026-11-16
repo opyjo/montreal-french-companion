@@ -168,7 +168,8 @@ export function useVerbLab(user: User | null, cloudReady: boolean, onStudied: ()
     const t = setInterval(() => setNow(Date.now()), 60000);
     return () => clearInterval(t);
   }, []);
-  const dueCount = useMemo(() => dueCells(cells, prefs, now).length, [cells, prefs, now]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const dueCount = useMemo(() => dueCells(cells, prefs, Date.now()).length, [cells, prefs, now]);
 
   return { cells, prefs, setPrefs, recordAnswer, dueCount, synced: cloud };
 }

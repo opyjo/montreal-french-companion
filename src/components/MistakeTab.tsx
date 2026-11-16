@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Eye, Lightbulb, Sparkles, Trash2 } from "lucide-react";
+import { ChevronDown, Eye, Lightbulb, RotateCcw, Sparkles, Trash2 } from "lucide-react";
 import { explainMistake } from "@/lib/ai";
 import { MISTAKE_LABELS, type Mistake, type MistakeExplanation } from "@/lib/types";
 import type { StudyData } from "@/lib/useStudyData";
 import type { Settings } from "@/lib/useSettings";
 import { Button, Card, ErrorBox, Field, SlowHint, SpeakButton, inputClass } from "./ui";
 import { WordCard } from "./WordCard";
+import { MistakeRedo, buildRedoItems, type RedoItem } from "./today/MistakeRedo";
 
 export interface MistakeFormState {
   prompt: string;
@@ -55,9 +56,35 @@ export function MistakeTab({
   }
 
   const history = data.mistakes.filter((m) => m.id !== current?.id);
+  const [redo, setRedo] = useState<RedoItem[] | null>(null);
+  const redoable = data.mistakes.filter((m) => m.kind !== "acceptable").length;
+
+  if (redo)
+    return (
+      <MistakeRedo
+        items={redo}
+        settings={settings}
+        onStudied={data.markStudied}
+        onExit={() => setRedo(null)}
+        exitLabel="Back to mistakes"
+      />
+    );
 
   return (
     <div className="space-y-4">
+      {redoable > 0 && (
+        <Card className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="font-semibold">Redo my mistakes</p>
+            <p className="text-sm text-muted">
+              Fix your {redoable} saved Duolingo mistake{redoable === 1 ? "" : "s"} again, plus practice sentences using the same rules.
+            </p>
+          </div>
+          <Button variant="secondary" className="shrink-0" onClick={() => setRedo(buildRedoItems(data.mistakes))}>
+            <RotateCcw className="size-4" aria-hidden /> Start
+          </Button>
+        </Card>
+      )}
       <Card>
         <form
           className="space-y-3"

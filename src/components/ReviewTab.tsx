@@ -24,7 +24,7 @@ interface QueueItem {
   id: string;
   dir: Dir;
 }
-interface Session {
+export interface Session {
   queue: QueueItem[];
   index: number;
   practice: boolean; // practice mode doesn't change the schedule
@@ -106,8 +106,7 @@ export function ReviewTab({
     const source = practice
       ? [...pool].sort((a, b) => b.lapses - a.lapses || a.interval - b.interval).slice(0, 10)
       : due.slice(0, SESSION_SIZE);
-    const queue = shuffle(source).map((w) => ({ id: w.id, dir: pickDir(w, settings.direction) }));
-    setSession({ queue, index: 0, practice, reviewed: 0, forgotten: 0 });
+    setSession(buildWordSession(source, settings.direction, practice));
   }
 
   if (session) {
@@ -247,16 +246,24 @@ export function ReviewTab({
 
 // ---------------------------------------------------------------------------
 
-function ReviewSession({
+/** A word review session over the given words (used by Review, Today and weak-spot drills). */
+export function buildWordSession(words: Word[], direction: ReviewDirection, practice: boolean): Session {
+  const queue = shuffle(words).map((w) => ({ id: w.id, dir: pickDir(w, direction) }));
+  return { queue, index: 0, practice, reviewed: 0, forgotten: 0 };
+}
+
+export function ReviewSession({
   session,
   setSession,
   data,
   settings,
+  exitLabel = "Back to overview",
 }: {
   session: Session;
   setSession: (s: Session | null) => void;
   data: StudyData;
   settings: Settings;
+  exitLabel?: string;
 }) {
   const [revealed, setRevealed] = useState(false);
   const [typed, setTyped] = useState("");
@@ -360,7 +367,7 @@ function ReviewSession({
             {session.forgotten > 0 && `, ${session.forgotten} to look at again soon`}. Bien joué !
           </p>
           <Button className="mt-4" onClick={() => setSession(null)}>
-            Back to overview
+            {exitLabel}
           </Button>
         </EmptyState>
       </Card>

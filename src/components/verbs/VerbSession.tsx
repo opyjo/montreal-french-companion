@@ -26,6 +26,8 @@ export function VerbSession({
   settings,
   onExit,
   onAgain,
+  onComplete,
+  exitLabel = "Back to verbs",
 }: {
   items: SessionItem[];
   title: string;
@@ -33,6 +35,8 @@ export function VerbSession({
   settings: Settings;
   onExit: () => void;
   onAgain?: () => void;
+  onComplete?: () => void;
+  exitLabel?: string;
 }) {
   const [queue, setQueue] = useState(initial);
   const [index, setIndex] = useState(0);
@@ -47,6 +51,11 @@ export function VerbSession({
   const item = queue[index];
   const done = !item;
   const answered = check !== null;
+
+  useEffect(() => {
+    if (done) onComplete?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [done]);
 
   // Reset per item; autoplay listening questions; focus the input.
   useEffect(() => {
@@ -169,7 +178,7 @@ export function VerbSession({
             </Button>
           )}
           <Button variant="secondary" onClick={onExit}>
-            Back to verbs
+            {exitLabel}
           </Button>
         </div>
       </Card>

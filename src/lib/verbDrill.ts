@@ -219,6 +219,11 @@ export function buildWeakSession(cells: Record<string, VerbCell>, prefs: VerbPre
   return shuffle(weakestCells(cells, 10)).map((c) => question(c, "type", prefs.tenses));
 }
 
+/** Typed questions for a given list of forms (weak-spot drills). */
+export function buildTypedSession(refs: CellRef[], prefs: VerbPrefs): SessionItem[] {
+  return shuffle(refs).map((r) => question(r, "type", prefs.tenses));
+}
+
 /** Drill one whole table, je → ils, typed. */
 export function buildTableSession(verb: string, tense: Tense, prefs: VerbPrefs): SessionItem[] {
   return [0, 1, 2, 3, 4, 5].map((person) => question({ verb, tense, person }, "type", prefs.tenses));
