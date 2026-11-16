@@ -14,6 +14,9 @@ export const VOICES: { id: Voice; label: string }[] = [
 
 const SAMPLE_RATE = 24000;
 const pcmCache = new Map<string, Float32Array>();
+// Set when HD voices are refused (e.g. App Check not enforced) so later taps
+// go straight to the device voice instead of waiting on a doomed request.
+let hdUnavailable = false;
 let audioCtx: AudioContext | null = null;
 let currentSource: AudioBufferSourceNode | null = null;
 
@@ -103,7 +106,7 @@ export async function speakFrench(
   const clean = text.trim();
   if (!clean) return;
 
-  if (voice === "browser" || !firebaseConfigured) {
+  if (voice === "browser" || !firebaseConfigured || hdUnavailable) {
     speakWithBrowser(clean, rate);
     return;
   }
@@ -129,6 +132,11 @@ export async function speakFrench(
       }
     } catch (err) {
       console.warn(`HD voice attempt ${attempt + 1} failed`, err);
+      const msg = String(err instanceof Error ? err.message : err);
+      if (/403|App Check|PERMISSION_DENIED|404|not found/i.test(msg)) {
+        hdUnavailable = true;
+        break;
+      }
     }
   }
   speakWithBrowser(clean, rate);

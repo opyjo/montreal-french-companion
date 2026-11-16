@@ -31,7 +31,7 @@ const WORD_SHAPE = `{
   "lookAlikes": "false friends or easily confused words (e.g. \\"poisson (fish) vs poison (poison)\\") or \\"\\""
 }`;
 
-function lookupPrompt(text: string): string {
+export function lookupPrompt(text: string): string {
   return `${LEARNER_CONTEXT}
 
 The learner pasted the following (it may be French or English, one word, a list of words, or a whole sentence):
@@ -52,7 +52,7 @@ Return ONLY valid JSON with this exact structure:
 }`;
 }
 
-function mistakePrompt(p: {
+export function mistakePrompt(p: {
   prompt: string;
   myAnswer: string;
   correctAnswer: string;
@@ -97,13 +97,24 @@ async function generateJson(prompt: string, settings: AiSettings): Promise<unkno
     if (!firebaseConfigured) {
       errors.push("Firebase is not configured");
     } else {
-      for (const name of GEMINI_TEXT_MODELS) {
+      // Free-tier Gemini often answers 429 (rate limit) or 500 ("high
+      // demand") for a moment. Those are temporary, so rotate models and back
+      // off; errors like 400/403/404 mean that model will never work here.
+      const delays = [0, 1000, 2000, 3000, 5000, 6000];
+      const dead = new Set<string>();
+      for (let i = 0; i < delays.length; i++) {
+        const live = GEMINI_TEXT_MODELS.filter((m) => !dead.has(m));
+        if (live.length === 0) break;
+        const name = live[i % live.length];
+        if (delays[i]) await new Promise((r) => setTimeout(r, delays[i]));
         try {
           const res = await getGeminiModel(name).generateContent(prompt);
           return JSON.parse(stripFences(res.response.text()));
         } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
           console.warn(`Firebase AI (${name}) failed`, err);
-          errors.push(`${name}: ${err instanceof Error ? err.message : err}`);
+          if (/\[(400|401|403|404)\b/.test(msg)) dead.add(name);
+          errors.push(`${name}: ${friendlyAiError(msg)}`);
         }
       }
     }
@@ -129,10 +140,17 @@ async function generateJson(prompt: string, settings: AiSettings): Promise<unkno
   }
 
   throw new Error(
-    `Couldn't reach the AI. ${errors.join(" · ")}${
+    `Couldn't reach the AI. ${[...new Set(errors.map((e) => e.replace(/^[^:]+: /, "")))].join(" · ")}${
       settings.apiKey ? "" : " — you can add your own Gemini or OpenAI key in Settings."
     }`
   );
+}
+
+function friendlyAiError(msg: string): string {
+  if (/\[429\b/.test(msg)) return "Gemini's free usage limit was hit — wait a minute and try again";
+  if (/high demand|\[50[03]\b/.test(msg)) return "Gemini is overloaded right now — try again in a moment";
+  if (/timeout|aborted/i.test(msg)) return "Gemini took too long to answer";
+  return msg.replace(/^AI: Error fetching from \S+ /, "").slice(0, 200);
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { LoaderCircle, Volume2 } from "lucide-react";
 import { speakFrench, type Voice } from "@/lib/speech";
 import type { Gender, PartOfSpeech } from "@/lib/types";
@@ -170,5 +170,22 @@ export function EmptyState({
       <h3 className="text-base font-semibold">{title}</h3>
       {children && <div className="mt-1 max-w-sm text-sm text-muted">{children}</div>}
     </div>
+  );
+}
+
+/** Shown under a form while an AI request is running longer than usual. */
+export function SlowHint({ active }: { active: boolean }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!active) return;
+    const t = setTimeout(() => setSlow(true), 5000);
+    return () => clearTimeout(t);
+  }, [active]);
+  if (!active || !slow) return null;
+  return (
+    <p role="status" className="text-sm text-muted">
+      Gemini is busy. Still trying, this can take up to 20 seconds…
+    </p>
   );
 }

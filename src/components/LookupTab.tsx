@@ -6,7 +6,7 @@ import { lookupWords } from "@/lib/ai";
 import type { LookupResult } from "@/lib/types";
 import type { StudyData } from "@/lib/useStudyData";
 import type { Settings } from "@/lib/useSettings";
-import { Button, Card, ErrorBox, Field, SpeakButton, inputClass } from "./ui";
+import { Button, Card, ErrorBox, Field, SlowHint, SpeakButton, inputClass } from "./ui";
 import { WordCard } from "./WordCard";
 
 export interface LookupState {
@@ -115,6 +115,7 @@ export function LookupTab({
         </form>
       </Card>
 
+      <SlowHint active={loading} />
       {error && <ErrorBox message={error} />}
 
       {result?.sentence && (
