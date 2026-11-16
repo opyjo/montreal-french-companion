@@ -2,6 +2,8 @@
 
 Duolingo teaches you French but rarely explains it. Petit à Petit fills the gaps. The name comes from the saying *petit à petit, l'oiseau fait son nid*: little by little, the bird builds its nest. It's a small Next.js + Firebase app you keep open next to your Duolingo lessons.
 
+Live at **https://petitapetit-fr.vercel.app**.
+
 ## What it does
 
 | Tab | What it does |
