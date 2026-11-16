@@ -1,158 +1,135 @@
 "use client";
 
-import { getFirebaseTtsModel } from "./firebase";
+import { firebaseConfigured, getTtsModel } from "./firebase";
 
-export type GeminiHdVoice = "Aoede" | "Achird" | "Sulafat" | "Puck";
+export type Voice = "Aoede" | "Achird" | "Sulafat" | "Puck" | "browser";
 
-export const GEMINI_HD_VOICES: {
-  id: GeminiHdVoice;
-  label: string;
-  desc: string;
-}[] = [
-  { id: "Aoede", label: "Aoede (HD Female)", desc: "Natural, breezy fr-CA" },
-  { id: "Achird", label: "Achird (HD Male)", desc: "Friendly Montreal dev" },
-  { id: "Sulafat", label: "Sulafat (HD Female)", desc: "Warm & clear fr-CA" },
-  { id: "Puck", label: "Puck (HD Male)", desc: "Upbeat & energetic" },
+export const VOICES: { id: Voice; label: string }[] = [
+  { id: "Aoede", label: "Aoede — HD, female" },
+  { id: "Achird", label: "Achird — HD, male" },
+  { id: "Sulafat", label: "Sulafat — HD, female, warm" },
+  { id: "Puck", label: "Puck — HD, male, upbeat" },
+  { id: "browser", label: "Device voice (instant, offline)" },
 ];
 
-// Cache decoded 24kHz PCM Float32Arrays in memory by voice + text so replays are instant
+const SAMPLE_RATE = 24000;
 const pcmCache = new Map<string, Float32Array>();
-let activeAudioCtx: AudioContext | null = null;
-let activeSourceNode: AudioBufferSourceNode | null = null;
+let audioCtx: AudioContext | null = null;
+let currentSource: AudioBufferSourceNode | null = null;
 
 function getAudioContext(): AudioContext {
-  if (!activeAudioCtx || activeAudioCtx.state === "closed") {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    activeAudioCtx = new AudioCtx({ sampleRate: 24000 });
+  if (!audioCtx || audioCtx.state === "closed") {
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext;
+    audioCtx = new Ctx({ sampleRate: SAMPLE_RATE });
   }
-  if (activeAudioCtx.state === "suspended") {
-    activeAudioCtx.resume();
-  }
-  return activeAudioCtx;
+  if (audioCtx.state === "suspended") void audioCtx.resume();
+  return audioCtx;
 }
 
-function stopCurrentAudio() {
-  if (activeSourceNode) {
+export function stopSpeaking() {
+  if (currentSource) {
     try {
-      activeSourceNode.stop();
-      activeSourceNode.disconnect();
+      currentSource.stop();
+      currentSource.disconnect();
     } catch {
-      // ignore if already stopped
+      // already stopped
     }
-    activeSourceNode = null;
+    currentSource = null;
   }
   if (typeof window !== "undefined" && "speechSynthesis" in window) {
     window.speechSynthesis.cancel();
   }
 }
 
-function decodeBase64Pcm16ToFloat32(base64: string): Float32Array {
-  const binaryStr = atob(base64);
-  const len = binaryStr.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryStr.charCodeAt(i);
-  }
-  const int16 = new Int16Array(bytes.buffer);
-  const float32 = new Float32Array(int16.length);
-  for (let i = 0; i < int16.length; i++) {
-    float32[i] = int16[i] / 32768.0;
-  }
-  return float32;
+function pcm16Base64ToFloat32(base64: string): Float32Array {
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const int16 = new Int16Array(bytes.buffer, 0, Math.floor(bytes.length / 2));
+  const out = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) out[i] = int16[i] / 32768;
+  return out;
 }
 
-function playFloat32Pcm(float32: Float32Array, rate = 1.0) {
-  stopCurrentAudio();
+function playPcm(samples: Float32Array, rate: number) {
+  stopSpeaking();
   const ctx = getAudioContext();
-  const audioBuffer = ctx.createBuffer(1, float32.length, 24000);
-  audioBuffer.getChannelData(0).set(float32);
-
-  const source = ctx.createBufferSource();
-  source.buffer = audioBuffer;
-  source.playbackRate.value = rate;
-  source.connect(ctx.destination);
-  activeSourceNode = source;
-  source.start(0);
+  const buffer = ctx.createBuffer(1, samples.length, SAMPLE_RATE);
+  buffer.getChannelData(0).set(samples);
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.playbackRate.value = rate;
+  src.connect(ctx.destination);
+  currentSource = src;
+  src.start(0);
 }
 
-export function getCanadianFrenchVoice(): SpeechSynthesisVoice | null {
-  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-    return null;
-  }
+function frenchBrowserVoice(): SpeechSynthesisVoice | null {
   const voices = window.speechSynthesis.getVoices();
-  const frCa = voices.find(
-    (v) =>
-      v.lang.toLowerCase() === "fr-ca" ||
-      v.lang.toLowerCase().startsWith("fr-ca") ||
-      v.name.toLowerCase().includes("amélie") ||
-      v.name.toLowerCase().includes("amelie") ||
-      v.name.toLowerCase().includes("nicolas")
+  return (
+    voices.find((v) => v.lang.toLowerCase() === "fr-fr") ||
+    voices.find((v) => v.lang.toLowerCase().startsWith("fr")) ||
+    null
   );
-  if (frCa) return frCa;
-  return voices.find((v) => v.lang.toLowerCase().startsWith("fr")) || null;
 }
 
-function fallbackBrowserSpeak(text: string, rate = 1.0): string {
-  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-    return "Audio unavailable";
-  }
-  stopCurrentAudio();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "fr-CA";
-  utterance.rate = rate;
-  const voice = getCanadianFrenchVoice();
-  if (voice) utterance.voice = voice;
-  window.speechSynthesis.speak(utterance);
-  return voice ? `${voice.name} (Browser fallback)` : "Browser fr-CA";
+function speakWithBrowser(text: string, rate: number): boolean {
+  if (typeof window === "undefined" || !("speechSynthesis" in window))
+    return false;
+  stopSpeaking();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "fr-FR";
+  u.rate = rate;
+  const v = frenchBrowserVoice();
+  if (v) u.voice = v;
+  window.speechSynthesis.speak(u);
+  return true;
 }
 
 /**
- * Generates ultra-natural Canadian French / Montreal Québécois speech using
- * Firebase AI Logic (`gemini-3.1-flash-tts-preview`) with 24kHz PCM playback and caching.
+ * Speak French text. Uses Gemini HD voices via Firebase AI Logic when
+ * available (cached per text), falling back to the device's French voice.
  */
 export async function speakFrench(
   text: string,
-  rate = 1.0,
-  voiceName: GeminiHdVoice = "Aoede",
-  onLoadingChange?: (loading: boolean) => void
-): Promise<string> {
-  if (typeof window === "undefined") return "SSR";
+  opts: { rate?: number; voice?: Voice } = {}
+): Promise<void> {
+  if (typeof window === "undefined") return;
+  const rate = opts.rate ?? 1;
+  const voice = opts.voice ?? "Aoede";
+  const clean = text.trim();
+  if (!clean) return;
 
-  const cacheKey = `${voiceName}:${text.trim()}`;
-  const cachedPcm = pcmCache.get(cacheKey);
-  if (cachedPcm) {
-    playFloat32Pcm(cachedPcm, rate);
-    return `Gemini HD (${voiceName} • fr-CA Cached)`;
+  if (voice === "browser" || !firebaseConfigured) {
+    speakWithBrowser(clean, rate);
+    return;
   }
 
-  onLoadingChange?.(true);
-  // Structured prompt per Firebase AI Logic TTS documentation to ensure natural Montreal Québécois cadence
-  const prompt = `[Audio Profile: A warm, friendly native Montreal software engineer speaking natural Canadian French (Québécois / Franglais)]
-[Scene: A casual daily standup or team chat in Montreal]
-[Director's Notes: Read the following French text naturally and conversationally with an authentic Montreal Canadian French (fr-CA) pronunciation. Read ONLY the text below:]
-${text}`;
+  const key = `${voice}:${clean}`;
+  const cached = pcmCache.get(key);
+  if (cached) {
+    playPcm(cached, rate);
+    return;
+  }
 
-  // Up to 2 attempts in case of transient 500 text-token return per Gemini TTS docs
+  const prompt = `Read the following French text aloud clearly, with standard French pronunciation, at a calm pace suitable for a beginner learner. Read only the text:\n${clean}`;
+
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const model = getFirebaseTtsModel(voiceName);
-      const result = await model.generateContent(prompt);
-      const inlineDataParts = result.response.inlineDataParts();
-      if (inlineDataParts?.[0]?.inlineData?.data) {
-        const float32 = decodeBase64Pcm16ToFloat32(
-          inlineDataParts[0].inlineData.data
-        );
-        pcmCache.set(cacheKey, float32);
-        onLoadingChange?.(false);
-        playFloat32Pcm(float32, rate);
-        return `Gemini HD (${voiceName} • fr-CA)`;
+      const res = await getTtsModel(voice).generateContent(prompt);
+      const data = res.response.inlineDataParts()?.[0]?.inlineData?.data;
+      if (data) {
+        const samples = pcm16Base64ToFloat32(data);
+        pcmCache.set(key, samples);
+        playPcm(samples, rate);
+        return;
       }
     } catch (err) {
-      console.warn(`Gemini TTS attempt ${attempt + 1} failed:`, err);
+      console.warn(`HD voice attempt ${attempt + 1} failed`, err);
     }
   }
-
-  onLoadingChange?.(false);
-  return fallbackBrowserSpeak(text, rate);
+  speakWithBrowser(clean, rate);
 }

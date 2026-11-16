@@ -1,14 +1,6 @@
-import { initializeApp, getApps, getApp } from "firebase/app";
-import {
-  getAuth,
-  GoogleAuthProvider,
-  signInWithPopup,
-  signInAnonymously,
-  signOut as fbSignOut,
-  onAuthStateChanged,
-  User,
-} from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
+import { getAuth, GoogleAuthProvider, type Auth } from "firebase/auth";
+import { getFirestore, type Firestore } from "firebase/firestore";
 import {
   getAI,
   getGenerativeModel,
@@ -25,49 +17,56 @@ export const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "",
 };
 
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const googleProvider = new GoogleAuthProvider();
+/** False when env vars are missing — the app then runs in local-only mode. */
+export const firebaseConfigured = Boolean(
+  firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId
+);
 
-export function getFirebaseGeminiModel(modelName = "gemini-3.8-flash") {
+let app: FirebaseApp | null = null;
+let auth: Auth | null = null;
+let db: Firestore | null = null;
+
+if (firebaseConfigured) {
+  app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+}
+
+export const googleProvider = new GoogleAuthProvider();
+
+/** Text models tried in order through Firebase AI Logic. */
+export const GEMINI_TEXT_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3.5-flash",
+  "gemini-2.5-flash",
+];
+
+export function getGeminiModel(modelName: string) {
+  if (!app) throw new Error("Firebase is not configured");
   const ai = getAI(app, { backend: new GoogleAIBackend() });
   return getGenerativeModel(ai, {
     model: modelName,
     generationConfig: {
-      temperature: 0.6,
-      maxOutputTokens: 2048,
+      temperature: 0.4,
+      maxOutputTokens: 4096,
       responseMimeType: "application/json",
     },
   });
 }
 
-export function getFirebaseTtsModel(voiceName = "Aoede") {
+export function getTtsModel(voiceName: string) {
+  if (!app) throw new Error("Firebase is not configured");
   const ai = getAI(app, { backend: new GoogleAIBackend() });
   return getGenerativeModel(ai, {
     model: "gemini-3.1-flash-tts-preview",
     generationConfig: {
       responseModalities: [ResponseModality.AUDIO],
       speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: {
-            voiceName,
-          },
-        },
-        languageCode: "fr-CA",
+        voiceConfig: { prebuiltVoiceConfig: { voiceName } },
+        languageCode: "fr-FR",
       },
     },
   });
 }
 
-export {
-  app,
-  auth,
-  db,
-  googleProvider,
-  signInWithPopup,
-  signInAnonymously,
-  fbSignOut,
-  onAuthStateChanged,
-};
-export type { User };
+export { app, auth, db };

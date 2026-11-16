@@ -1,238 +1,257 @@
-import { getFirebaseGeminiModel } from "./firebase";
+import { firebaseConfigured, GEMINI_TEXT_MODELS, getGeminiModel } from "./firebase";
+import type {
+  Gender,
+  LookupResult,
+  MistakeExplanation,
+  MistakeKind,
+  PartOfSpeech,
+  PracticeSentence,
+  WordInfo,
+} from "./types";
 
-export interface StandupResult {
-  beginnerFr: string;
-  franglaisFr: string;
-  proFr: string;
-  phoneticGuide: string;
-  tips: string[];
-  keyVocab: { fr: string; en: string; note: string }[];
-  source: "firebase-ai" | "custom-api" | "local-fallback";
+export type AiProvider = "firebase" | "gemini" | "openai";
+
+export interface AiSettings {
+  provider: AiProvider;
+  apiKey: string;
 }
 
-export interface DecodeResult {
-  original: string;
-  meaningEn: string;
-  standardFr: string;
-  register: string;
-  phonetic: string;
-  breakdown: { term: string; meaning: string; note: string }[];
-  exampleReplyFr: string;
-  exampleReplyEn: string;
-  source: "firebase-ai" | "custom-api" | "local-fallback";
+const LEARNER_CONTEXT = `You are a patient French tutor helping an English speaker who is working through Duolingo's French course (currently around sections 1–2, beginner level). Teach standard international French (France) only — no Québécois or regional slang. Keep every explanation short, concrete and beginner-friendly; avoid jargon, or explain it in a few words when you must use it.`;
+
+const WORD_SHAPE = `{
+  "french": "the French word or phrase; ALWAYS include the definite article for nouns (le/la/l'/les), e.g. \\"la pomme\\", \\"l'eau (f)\\"; give verbs in the infinitive",
+  "english": "English meaning(s), separated by \\" / \\" if several, e.g. \\"to eat / to have a meal\\"",
+  "partOfSpeech": "noun | verb | adjective | adverb | pronoun | preposition | phrase | other",
+  "gender": "masculine | feminine | none",
+  "pronunciation": "simple English-friendly respelling with the stressed syllable in CAPS, e.g. \\"lah POHM\\"",
+  "memoryTip": "ONE vivid, specific memory hook linking the sound or spelling to the meaning (a mnemonic, an English cognate, or a mini-story). For nouns, also give a hook for the gender. Max 2 sentences.",
+  "exampleFr": "a short, simple example sentence a Duolingo beginner could understand",
+  "exampleEn": "its English translation",
+  "grammarNote": "one beginner-relevant note (e.g. present tense je/tu/il/nous forms for verbs, feminine/plural forms for adjectives, irregular plural) or \\"\\"",
+  "lookAlikes": "false friends or easily confused words (e.g. \\"poisson (fish) vs poison (poison)\\") or \\"\\""
+}`;
+
+function lookupPrompt(text: string): string {
+  return `${LEARNER_CONTEXT}
+
+The learner pasted the following (it may be French or English, one word, a list of words, or a whole sentence):
+"""
+${text}
+"""
+
+Instructions:
+- Detect the language of each item. Whatever the input language, the "french" field is French and "english" is English.
+- If the input is a list of words/phrases, return one item per word/phrase, in the same order.
+- If the input is a full sentence (or several), set "sentence" with a natural translation, and ALSO return the 2–8 most useful vocabulary items from it (skip trivial words like "et", "the", "a").
+- Correct obvious misspellings silently.
+
+Return ONLY valid JSON with this exact structure:
+{
+  "sentence": null or { "original": "...", "translation": "...", "french": "whichever of original/translation is the French version", "notes": "one short note on anything a beginner would find surprising in this sentence, or \\"\\"" },
+  "items": [ ${WORD_SHAPE} ]
+}`;
 }
 
-function cleanJsonText(raw: string): string {
+function mistakePrompt(p: {
+  prompt: string;
+  myAnswer: string;
+  correctAnswer: string;
+}): string {
+  return `${LEARNER_CONTEXT}
+
+The learner got this exercise wrong in Duolingo and wants to understand why.
+- Exercise prompt (what Duolingo showed them): ${p.prompt ? `"${p.prompt}"` : "(not provided)"}
+- The learner's answer: "${p.myAnswer}"
+- Duolingo's correct answer: "${p.correctAnswer}"
+
+Compare the two answers carefully, word by word. If the learner's answer is actually also correct French with the same meaning, say so (kind "acceptable") and explain why Duolingo might not accept it.
+
+Return ONLY valid JSON with this exact structure:
+{
+  "kind": "acceptable | typo | accent | agreement | article | conjugation | word-order | vocabulary | missing-word | extra-word | other — the MAIN problem",
+  "headline": "one plain sentence saying exactly what went wrong",
+  "explanation": "2–4 short sentences explaining why, at beginner level",
+  "rule": "the general rule to remember, in one line",
+  "memoryTip": "a short trick to never make this mistake again",
+  "differences": [ { "yours": "the learner's word/fragment (\\"\\" if missing)", "correct": "the correct word/fragment", "why": "very short reason" } ],
+  "practice": [ { "en": "a new English sentence that uses the same rule, beginner level", "fr": "its French translation" } ],
+  "wordsToSave": [ ${WORD_SHAPE} ]
+}
+Give exactly 3 practice sentences. In "wordsToSave", include 0–3 words from the correct answer that the learner seems not to know yet (empty array if the mistake was only a typo or accent).`;
+}
+
+// ---------------------------------------------------------------------------
+
+function stripFences(raw: string): string {
   return raw
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```$/, "")
     .trim();
 }
 
-export async function generateStandupCoach(params: {
-  yesterdayEn: string;
-  todayEn: string;
-  blockersEn: string;
-  customProvider?: "firebase" | "gemini" | "openai";
-  customApiKey?: string;
-}): Promise<StandupResult> {
-  const {
-    yesterdayEn,
-    todayEn,
-    blockersEn,
-    customProvider = "firebase",
-    customApiKey = "",
-  } = params;
+async function generateJson(prompt: string, settings: AiSettings): Promise<unknown> {
+  const errors: string[] = [];
 
-  const prompt = `You are a bilingual Montreal Software Engineering coach helping an English-speaking developer give their daily standup in French to a native Québécois tech team in Montreal.
-
-Developer's English update:
-- Yesterday: ${yesterdayEn || "Worked on my sprint tasks"}
-- Today: ${todayEn || "Continuing on current ticket"}
-- Blockers: ${blockersEn || "None"}
-
-Return ONLY valid JSON matching this exact structure:
-{
-  "beginnerFr": "Short, high-confidence survival French sentences a Day-1 learner can say easily without getting stuck.",
-  "franglaisFr": "Authentic casual Montreal software engineer Franglais (using words like 'Faque', 'pis', 'de mon bord', 'PR', 'merger', 'staging', 'ticket', 'chus', '-tu').",
-  "proFr": "Clean, natural professional Canadian French suitable for a formal demo or stakeholder meeting.",
-  "phoneticGuide": "English-friendly phonetic pronunciation guide for the beginnerFr and franglaisFr versions.",
-  "tips": [
-    "3 short coaching tips explaining the Québécois/Montreal tech expressions used"
-  ],
-  "keyVocab": [
-    { "fr": "French/Québécois phrase", "en": "English meaning", "note": "Pronunciation or usage tip" }
-  ]
-}`;
-
-  // 1. Try Firebase AI Logic (Gemini Developer API initialized on the project)
-  if (customProvider === "firebase" || !customApiKey) {
-    for (const modelName of ["gemini-3.8-flash", "gemini-3.5-flash"]) {
-      try {
-        const model = getFirebaseGeminiModel(modelName);
-        const res = await model.generateContent(prompt);
-        const text = res.response.text();
-        const parsed = JSON.parse(cleanJsonText(text));
-        return {
-          beginnerFr: parsed.beginnerFr || "",
-          franglaisFr: parsed.franglaisFr || "",
-          proFr: parsed.proFr || "",
-          phoneticGuide: parsed.phoneticGuide || "",
-          tips: Array.isArray(parsed.tips) ? parsed.tips : [],
-          keyVocab: Array.isArray(parsed.keyVocab) ? parsed.keyVocab : [],
-          source: "firebase-ai",
-        };
-      } catch (err) {
-        console.warn(`Firebase AI Logic (${modelName}) attempt failed:`, err);
+  if (settings.provider === "firebase" || !settings.apiKey) {
+    if (!firebaseConfigured) {
+      errors.push("Firebase is not configured");
+    } else {
+      for (const name of GEMINI_TEXT_MODELS) {
+        try {
+          const res = await getGeminiModel(name).generateContent(prompt);
+          return JSON.parse(stripFences(res.response.text()));
+        } catch (err) {
+          console.warn(`Firebase AI (${name}) failed`, err);
+          errors.push(`${name}: ${err instanceof Error ? err.message : err}`);
+        }
       }
     }
   }
 
-  // 2. Try Custom API route if user provided a key
-  if (customApiKey) {
-    try {
-      const response = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "standup",
-          prompt,
-          provider: customProvider === "openai" ? "openai" : "gemini",
-          apiKey: customApiKey,
-        }),
-      });
-      if (response.ok) {
-        const parsed = await response.json();
-        return { ...parsed, source: "custom-api" };
-      }
-    } catch (err) {
-      console.warn("Custom API call failed:", err);
-    }
+  if (settings.apiKey) {
+    const res = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        provider: settings.provider === "openai" ? "openai" : "gemini",
+        apiKey: settings.apiKey,
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) return body;
+    errors.push(
+      `API key (${settings.provider}): ${
+        (body as { error?: string }).error || res.statusText
+      }`
+    );
   }
 
-  // 3. Smart Offline Fallback
+  throw new Error(
+    `Couldn't reach the AI. ${errors.join(" · ")}${
+      settings.apiKey ? "" : " — you can add your own Gemini or OpenAI key in Settings."
+    }`
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Normalisers: never trust the model's JSON blindly.
+
+const POS: PartOfSpeech[] = [
+  "noun",
+  "verb",
+  "adjective",
+  "adverb",
+  "pronoun",
+  "preposition",
+  "phrase",
+  "other",
+];
+const KINDS: MistakeKind[] = [
+  "acceptable",
+  "typo",
+  "accent",
+  "agreement",
+  "article",
+  "conjugation",
+  "word-order",
+  "vocabulary",
+  "missing-word",
+  "extra-word",
+  "other",
+];
+
+function str(v: unknown, max = 2000): string {
+  return typeof v === "string" ? v.trim().slice(0, max) : "";
+}
+
+function arr(v: unknown): Record<string, unknown>[] {
+  return Array.isArray(v)
+    ? v.filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+    : [];
+}
+
+export function toWordInfo(raw: Record<string, unknown>): WordInfo | null {
+  const french = str(raw.french, 300);
+  const english = str(raw.english, 300);
+  if (!french || !english) return null;
+  const pos = str(raw.partOfSpeech).toLowerCase() as PartOfSpeech;
+  const gender = str(raw.gender).toLowerCase() as Gender;
   return {
-    beginnerFr: `Hier, j'ai travaillé sur ${yesterdayEn || "mon ticket"}. Aujourd'hui, je continue là-dessus. Pas de bloqueurs de mon bord!`,
-    franglaisFr: `Hier, j'ai avancé sur ${yesterdayEn || "le ticket"} pis j'ai ouvert ma PR. Faque aujourd'hui, je regarde ${todayEn || "la suite"}. ${
-      blockersEn && blockersEn.toLowerCase() !== "none"
-        ? `Chus juste un peu bloqué sur ${blockersEn}.`
-        : "Rien à signaler de mon bord!"
-    }`,
-    proFr: `Hier, j'ai complété mes tâches concernant ${yesterdayEn || "le sprint"}. Aujourd'hui, je me concentre sur ${todayEn || "la prochaine étape"}. Aucun obstacle à signaler de mon côté.`,
-    phoneticGuide:
-      "ee-air zhay a-van-sé sur luh tee-kè pee zhay oo-vair ma pé-air. fak oh-zhoor-dwee zhuh kon-tee-nü. ryen a see-nya-lé duh mon bor!",
-    tips: [
-      "Say 'de mon bord' (on my end) — Montreal devs use it in almost every standup.",
-      "Use 'Faque' (so) to transition from yesterday's update to today's plan.",
-      "Keep English tech nouns like 'PR', 'ticket', 'staging', and 'bug' — Montreal engineers rarely translate them!",
-    ],
-    keyVocab: [
-      {
-        fr: "De mon bord",
-        en: "On my end / From my side",
-        note: "Pronounced: duh mon bor",
-      },
-      {
-        fr: "Faque aujourd'hui",
-        en: "So today",
-        note: "Pronounced: fak oh-zhoor-dwee",
-      },
-    ],
-    source: "local-fallback",
+    french,
+    english,
+    partOfSpeech: POS.includes(pos) ? pos : "other",
+    gender: gender === "masculine" || gender === "feminine" ? gender : "none",
+    pronunciation: str(raw.pronunciation, 300),
+    memoryTip: str(raw.memoryTip, 800),
+    exampleFr: str(raw.exampleFr, 500),
+    exampleEn: str(raw.exampleEn, 500),
+    grammarNote: str(raw.grammarNote, 800),
+    lookAlikes: str(raw.lookAlikes, 500),
   };
 }
 
-export async function decodeMeetingPhrase(params: {
-  phrase: string;
-  customProvider?: "firebase" | "gemini" | "openai";
-  customApiKey?: string;
-}): Promise<DecodeResult> {
-  const { phrase, customProvider = "firebase", customApiKey = "" } = params;
-
-  const prompt = `You are a Montreal Québécois & Workplace "Franglais" expert helping an English-speaking software engineer decode something they heard in a meeting or read on Slack in Montreal.
-
-Phrase to decode: "${phrase}"
-
-Return ONLY valid JSON matching this exact structure:
-{
-  "original": "${phrase.replace(/"/g, '\\"')}",
-  "meaningEn": "Natural English translation in a software/workplace context",
-  "standardFr": "How standard/European Duolingo French would phrase this",
-  "register": "Casual Montreal Tech / Québécois Spoken / Workplace Franglais",
-  "phonetic": "Easy English-friendly pronunciation guide in Canadian French",
-  "breakdown": [
-    {
-      "term": "Specific word/contraction from the phrase",
-      "meaning": "What it means in English",
-      "note": "Why Montrealers say it this way (e.g. contraction, anglicism, Québécois expression)"
-    }
-  ],
-  "exampleReplyFr": "A natural, short Montreal French reply you can say or type back on Slack",
-  "exampleReplyEn": "English meaning of that reply"
-}`;
-
-  if (customProvider === "firebase" || !customApiKey) {
-    for (const modelName of ["gemini-3.8-flash", "gemini-3.5-flash"]) {
-      try {
-        const model = getFirebaseGeminiModel(modelName);
-        const res = await model.generateContent(prompt);
-        const text = res.response.text();
-        const parsed = JSON.parse(cleanJsonText(text));
-        return {
-          original: parsed.original || phrase,
-          meaningEn: parsed.meaningEn || "",
-          standardFr: parsed.standardFr || "",
-          register: parsed.register || "Québécois / Montreal Tech",
-          phonetic: parsed.phonetic || "",
-          breakdown: Array.isArray(parsed.breakdown) ? parsed.breakdown : [],
-          exampleReplyFr: parsed.exampleReplyFr || "Parfait, c'est beau!",
-          exampleReplyEn: parsed.exampleReplyEn || "Perfect, sounds good!",
-          source: "firebase-ai",
-        };
-      } catch (err) {
-        console.warn(`Firebase AI Logic (${modelName}) decode failed:`, err);
-      }
-    }
+export async function lookupWords(
+  text: string,
+  settings: AiSettings
+): Promise<LookupResult> {
+  const raw = (await generateJson(lookupPrompt(text), settings)) as Record<
+    string,
+    unknown
+  >;
+  const s = raw?.sentence as Record<string, unknown> | null | undefined;
+  const sentence =
+    s && str(s.translation)
+      ? {
+          original: str(s.original) || text.trim(),
+          translation: str(s.translation),
+          french: str(s.french),
+          notes: str(s.notes),
+        }
+      : null;
+  const items = arr(raw?.items)
+    .map(toWordInfo)
+    .filter((x): x is WordInfo => x !== null)
+    .slice(0, 30);
+  if (!sentence && items.length === 0) {
+    throw new Error("The AI returned nothing usable — try rephrasing.");
   }
+  return { sentence, items };
+}
 
-  if (customApiKey) {
-    try {
-      const response = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "decode",
-          prompt,
-          provider: customProvider === "openai" ? "openai" : "gemini",
-          apiKey: customApiKey,
-        }),
-      });
-      if (response.ok) {
-        const parsed = await response.json();
-        return { ...parsed, source: "custom-api" };
-      }
-    } catch (err) {
-      console.warn("Custom API decode failed:", err);
-    }
-  }
-
+export async function explainMistake(
+  input: { prompt: string; myAnswer: string; correctAnswer: string },
+  settings: AiSettings
+): Promise<MistakeExplanation> {
+  const raw = (await generateJson(mistakePrompt(input), settings)) as Record<
+    string,
+    unknown
+  >;
+  const kind = str(raw?.kind).toLowerCase() as MistakeKind;
+  const headline = str(raw?.headline, 500);
+  if (!headline) throw new Error("The AI returned nothing usable — try again.");
   return {
-    original: phrase,
-    meaningEn:
-      "Sounds good / So let's check that later today (Montreal workplace expression)",
-    standardFr: "C'est d'accord, nous regarderons cela plus tard aujourd'hui.",
-    register: "Casual Montreal Tech / Québécois",
-    phonetic: "sè boh, on ruh-gard sa tan-toh",
-    breakdown: [
-      {
-        term: phrase,
-        meaning: "Spoken Montreal workplace phrase",
-        note: "Contains common Québécois contractions and workplace Franglais.",
-      },
-    ],
-    exampleReplyFr: "Parfait, c'est beau! Fais-moi signe.",
-    exampleReplyEn: "Perfect, sounds good! Let me know.",
-    source: "local-fallback",
+    kind: KINDS.includes(kind) ? kind : "other",
+    headline,
+    explanation: str(raw.explanation, 2000),
+    rule: str(raw.rule, 500),
+    memoryTip: str(raw.memoryTip, 800),
+    differences: arr(raw.differences)
+      .map((d) => ({
+        yours: str(d.yours, 200),
+        correct: str(d.correct, 200),
+        why: str(d.why, 300),
+      }))
+      .filter((d) => d.yours || d.correct)
+      .slice(0, 8),
+    practice: arr(raw.practice)
+      .map((p) => ({ en: str(p.en, 300), fr: str(p.fr, 300) }))
+      .filter((p): p is PracticeSentence => !!(p.en && p.fr))
+      .slice(0, 5),
+    wordsToSave: arr(raw.wordsToSave)
+      .map(toWordInfo)
+      .filter((x): x is WordInfo => x !== null)
+      .slice(0, 5),
   };
 }
