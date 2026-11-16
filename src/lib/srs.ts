@@ -1,4 +1,12 @@
-import type { Word } from "./types";
+/** Any item scheduled by spaced repetition (a word, or one verb form). */
+export interface SrsState {
+  interval: number;
+  repetition: number;
+  easeFactor: number;
+  lapses: number;
+  nextReviewAt: number;
+  updatedAt: number;
+}
 
 /** Again = forgot, Hard = got it with effort, Good = recalled, Easy = instant. */
 export type Grade = "again" | "hard" | "good" | "easy";
@@ -18,7 +26,7 @@ export const NEW_WORD_SRS = {
  * re-queued in the current session); remembered cards are spaced out
  * 1 day → 3 days → interval × ease, which is what makes words stick.
  */
-export function schedule(word: Word, grade: Grade, now = Date.now()): Word {
+export function schedule<T extends SrsState>(word: T, grade: Grade, now = Date.now()): T {
   let { interval, repetition, easeFactor, lapses } = word;
 
   if (grade === "again") {
@@ -58,18 +66,18 @@ export function schedule(word: Word, grade: Grade, now = Date.now()): Word {
 }
 
 /** Human-readable "next review" hint shown on the grade buttons. */
-export function previewInterval(word: Word, grade: Grade): string {
+export function previewInterval(word: SrsState, grade: Grade): string {
   const next = schedule(word, grade, 0);
   if (grade === "again") return "10 min";
   return next.interval === 1 ? "1 day" : `${next.interval} days`;
 }
 
-export function isDue(word: Word, now = Date.now()): boolean {
+export function isDue(word: SrsState, now = Date.now()): boolean {
   return word.nextReviewAt <= now;
 }
 
 /** Strength bucket for the word list. */
-export function strength(word: Word): "new" | "learning" | "known" | "strong" {
+export function strength(word: SrsState): "new" | "learning" | "known" | "strong" {
   if (word.repetition === 0 && word.lapses === 0 && word.interval === 0)
     return "new";
   if (word.interval < 3) return "learning";

@@ -6,6 +6,7 @@ Duolingo teaches you French but rarely explains it. Carnet fills the gaps. It's 
 
 | Tab | What it does |
 | --- | --- |
+| **Verbs** | **Verb Lab.** The 60 most useful verbs in Duolingo order, with conjugation tables for présent, passé composé, futur proche, imparfait and futur simple (built-in rules, no AI). Endings are colour-coded, each row has audio, and each verb has a memory tip. **Practice** introduces one new table at a time, then reviews each *verb + tense + person* on its own spaced-repetition schedule, so it learns that you know *je vais* but not *nous allons*. Answers are typed (with accent keys) or multiple choice, plus listening questions. Wrong answers say *why* ("That's the nous form", "That's the imparfait"). Also: drill any single table, a 60-second speed round, and a "forms you miss most" list. |
 | **Look up** | Paste French or English words, a list, or a full sentence. Each word comes back with its translation, article and gender (colour-coded: blue = masculine, pink = feminine), a pronunciation guide, a **memory trick**, an example sentence, a grammar note and look-alike warnings. Save words to your deck one at a time or all at once, optionally tagged with the Duolingo unit. |
 | **Mistakes** | Paste what Duolingo asked, your answer and the correct answer. You get the type of mistake, a word-by-word diff, the rule in plain English, a trick to remember it and three practice sentences. It also suggests words to save. Explanations are kept in a history. |
 | **Review** | Spaced-repetition flashcards (SM-2 style: 1 day → 3 days → ~8 → ~20…). New words start French→English, then mostly English→French. Optional *type your answer* mode with an accent keyboard and Duolingo-style lenient grading (accents, missing articles and typos are flagged rather than failed). You can filter by unit. Forgotten words come back at the end of the session. |
@@ -31,9 +32,21 @@ npm run dev
 users/{uid}                 streak, lastStudyDate, totalReviews
 users/{uid}/words/{id}      word info + SRS state (interval, repetition, easeFactor, lapses, nextReviewAt)
 users/{uid}/mistakes/{id}   explained Duolingo mistakes
+users/{uid}/verbCells/{id}  Verb Lab: SRS state per verb form (e.g. manger__present__3)
+users/{uid}/meta/verbLab    Verb Lab settings (my verbs, tenses, answer mode)
+```
+
+## Tests
+
+```bash
+npm test   # conjugation tables, answer checking, session building
 ```
 
 ## Code map
+
+- `src/data/verbs.ts`: the verb list (irregular forms and stems, tips, examples)
+- `src/lib/conjugate.ts`: conjugation engine for all five tenses
+- `src/lib/verbDrill.ts`: answer checking, multiple choice options, practice sessions
 
 - `src/lib/ai.ts`: prompts and response validation for look-ups and mistake explanations
 - `src/lib/srs.ts`: spaced-repetition scheduler

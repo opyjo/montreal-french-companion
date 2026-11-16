@@ -162,13 +162,18 @@ export function useStudyData() {
       setProfile(p);
       if (cloud) {
         // Overwrite (not merge) so legacy fields from the old app are dropped
-        // and the doc always matches the security rules.
-        await setDoc(doc(db!, "users", user!.uid), {
-          streak: p.streak,
-          lastStudyDate: p.lastStudyDate,
-          totalReviews: p.totalReviews,
-          updatedAt: Date.now(),
-        });
+        // and the doc always matches the security rules. A failed streak
+        // write must never break the review/save that triggered it.
+        try {
+          await setDoc(doc(db!, "users", user!.uid), {
+            streak: p.streak,
+            lastStudyDate: p.lastStudyDate,
+            totalReviews: p.totalReviews,
+            updatedAt: Date.now(),
+          });
+        } catch (err) {
+          console.warn("Profile save failed", err);
+        }
       } else {
         writeLocal(LS.profile, p);
       }
@@ -266,6 +271,12 @@ export function useStudyData() {
     [putWords, saveProfile]
   );
 
+  /** Counts today toward the streak (used by verb drills). */
+  const markStudied = useCallback(async () => {
+    const p = nextStreak(profileRef.current);
+    if (p !== profileRef.current) await saveProfile(p);
+  }, [saveProfile]);
+
   const saveMistake = useCallback(
     async (m: Omit<Mistake, "id" | "createdAt">) => {
       const full: Mistake = { ...m, id: newId("m"), createdAt: Date.now() };
@@ -343,6 +354,7 @@ export function useStudyData() {
     updateWord,
     deleteWord,
     reviewWord,
+    markStudied,
     saveMistake,
     deleteMistake,
     signInWithGoogle,

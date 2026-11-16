@@ -1,29 +1,33 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Brain, Cloud, CloudOff, Flame, Languages, Library, Settings as SettingsIcon, Sparkles } from "lucide-react";
+import { BookA, Brain, Cloud, CloudOff, Flame, Languages, Library, Settings as SettingsIcon, Sparkles } from "lucide-react";
 import { isDue } from "@/lib/srs";
 import { useStudyData } from "@/lib/useStudyData";
 import { useSettings } from "@/lib/useSettings";
+import { useVerbLab } from "@/lib/useVerbLab";
+import { VerbsTab } from "@/components/verbs/VerbsTab";
 import { LookupTab, type LookupState } from "@/components/LookupTab";
 import { MistakeTab, type MistakeFormState } from "@/components/MistakeTab";
 import { ReviewTab } from "@/components/ReviewTab";
 import { WordsTab } from "@/components/WordsTab";
 import { SettingsPanel } from "@/components/SettingsPanel";
 
-type Tab = "lookup" | "mistakes" | "review" | "words";
+type Tab = "verbs" | "lookup" | "mistakes" | "review" | "words";
 
 const TABS: { id: Tab; label: string; Icon: typeof Languages }[] = [
+  { id: "verbs", label: "Verbs", Icon: BookA },
+  { id: "review", label: "Review", Icon: Brain },
   { id: "lookup", label: "Look up", Icon: Languages },
   { id: "mistakes", label: "Mistakes", Icon: Sparkles },
-  { id: "review", label: "Review", Icon: Brain },
   { id: "words", label: "Words", Icon: Library },
 ];
 
 export default function Home() {
   const data = useStudyData();
+  const lab = useVerbLab(data.user, data.mode === "cloud", data.markStudied);
   const { settings, update } = useSettings();
-  const [tab, setTab] = useState<Tab>("lookup");
+  const [tab, setTab] = useState<Tab>("verbs");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [lookup, setLookup] = useState<LookupState>({ text: "", tag: "", result: null });
   const [mistake, setMistake] = useState<MistakeFormState>({
@@ -58,6 +62,7 @@ export default function Home() {
     return () => clearInterval(t);
   }, []);
   const dueCount = useMemo(() => data.words.filter((w) => isDue(w, now)).length, [data.words, now]);
+  const badge = (id: Tab) => (id === "review" ? dueCount : id === "verbs" ? lab.dueCount : 0);
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-2xl flex-col">
@@ -106,8 +111,8 @@ export default function Home() {
             >
               <Icon className="size-4" aria-hidden />
               {label}
-              {id === "review" && dueCount > 0 && (
-                <span className="rounded-full bg-primary px-1.5 text-xs text-primary-fg tabular-nums">{dueCount}</span>
+              {badge(id) > 0 && (
+                <span className="rounded-full bg-primary px-1.5 text-xs text-primary-fg tabular-nums">{badge(id)}</span>
               )}
             </button>
           ))}
@@ -122,6 +127,7 @@ export default function Home() {
         {tab === "review" && (
           <ReviewTab data={data} settings={settings} updateSettings={update} onGoLookup={() => go("lookup")} />
         )}
+        {tab === "verbs" && <VerbsTab lab={lab} settings={settings} />}
         {tab === "words" && <WordsTab data={data} settings={settings} onGoLookup={() => go("lookup")} />}
       </main>
 
@@ -130,7 +136,7 @@ export default function Home() {
         className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden"
         aria-label="Sections"
       >
-        <div className="mx-auto grid max-w-2xl grid-cols-4">
+        <div className="mx-auto grid max-w-2xl grid-cols-5">
           {TABS.map(({ id, label, Icon }) => (
             <button
               key={id}
@@ -142,9 +148,9 @@ export default function Home() {
             >
               <Icon className="size-5" aria-hidden />
               {label}
-              {id === "review" && dueCount > 0 && (
+              {badge(id) > 0 && (
                 <span className="absolute top-1.5 left-1/2 ml-2 min-w-5 rounded-full bg-primary px-1 text-[10px] leading-5 text-primary-fg tabular-nums">
-                  {dueCount}
+                  {badge(id)}
                 </span>
               )}
             </button>
