@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BookA, Cloud, CloudOff, Flame, GraduationCap, Library, Settings as SettingsIcon, Sparkles, Sun } from "lucide-react";
+import { Bird, BookA, Cloud, CloudOff, Flame, GraduationCap, Library, Settings as SettingsIcon, Sparkles, Sun } from "lucide-react";
 import { isDue } from "@/lib/srs";
 import { useStudyData } from "@/lib/useStudyData";
 import { useSettings } from "@/lib/useSettings";
@@ -82,12 +82,12 @@ export default function Home() {
     <div className="mx-auto flex min-h-dvh max-w-2xl flex-col">
       <header className="sticky top-0 z-30 border-b border-line bg-bg/90 backdrop-blur">
         <div className="flex items-center gap-3 px-4 py-3">
-          <div className="flex size-9 items-center justify-center rounded-xl bg-primary text-lg font-black text-primary-fg" aria-hidden>
-            C
+          <div className="flex size-9 items-center justify-center rounded-xl bg-primary text-primary-fg" aria-hidden>
+            <Bird className="size-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <h1 className="text-base leading-tight font-bold">Carnet</h1>
-            <p className="truncate text-xs text-muted">Your French study sidekick</p>
+            <h1 className="text-base leading-tight font-bold" lang="fr">Petit à Petit</h1>
+            <p className="truncate text-xs text-muted">French, bit by bit</p>
           </div>
           <div
             className="flex items-center gap-1 rounded-full bg-warn-soft px-2.5 py-1 text-sm font-semibold text-warn"

@@ -1,7 +1,7 @@
 rules_version = '2';
 
 // ===============================================================
-// Data model — Carnet (Duolingo French study companion)
+// Data model — Petit à Petit (Duolingo French study companion)
 // ===============================================================
 //
 // /users/{uid}                    profile

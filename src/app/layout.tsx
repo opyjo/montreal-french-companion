@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Carnet — French study sidekick",
+  title: "Petit à Petit — French study sidekick",
   description:
     "A companion for your Duolingo French: look up words, understand your mistakes, and memorize vocabulary with spaced repetition.",
 };
