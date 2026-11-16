@@ -273,3 +273,113 @@ export async function explainMistake(
       .slice(0, 5),
   };
 }
+
+// ---------------------------------------------------------------------------
+// "About you": personalised practice
+
+export interface Profile {
+  name: string;
+  work: string;
+  city: string;
+  family: string;
+  hobbies: string;
+  food: string;
+  routine: string;
+}
+
+export interface PersonalSentence {
+  en: string;
+  fr: string;
+  verb: string;
+}
+
+function profileText(p: Profile): string {
+  const lines = [
+    p.name && `Name: ${p.name}`,
+    p.work && `Work: ${p.work}`,
+    p.city && `Lives in: ${p.city}`,
+    p.family && `Family / pets: ${p.family}`,
+    p.hobbies && `Hobbies: ${p.hobbies}`,
+    p.food && `Food and drink they like: ${p.food}`,
+    p.routine && `A typical day: ${p.routine}`,
+  ].filter(Boolean);
+  return lines.length ? lines.join("\n") : "(no details given — keep it about everyday life)";
+}
+
+export async function generatePersonalSentences(
+  input: { profile: Profile; verbs: string[]; tenses: string[]; count?: number },
+  settings: AiSettings
+): Promise<PersonalSentence[]> {
+  const count = input.count ?? 8;
+  const prompt = `${LEARNER_CONTEXT}
+
+Write ${count} short practice sentences (5–10 words) about THIS learner's real life, as things they would actually say about themselves ("I…", "my wife…", "on Saturdays I…"). Make them specific to the details below, not generic.
+
+About the learner:
+${profileText(input.profile)}
+
+Constraints:
+- Each sentence uses one of these verbs (the ones they have studied): ${input.verbs.join(", ")}
+- Spread the sentences across these tenses: ${input.tenses.join(", ")}
+- Beginner vocabulary only (Duolingo sections 1–2). Natural, correct standard French, the way a native speaker would say it. Watch the classic traps: no article for a job after être (Je suis développeur, not "un développeur"); use the right partitive (du café, de l'eau); être verbs in the passé composé (je suis allé).
+- Spell the English correctly too.
+
+Return ONLY valid JSON:
+{ "sentences": [ { "en": "English sentence", "fr": "French translation", "verb": "infinitive used" } ] }`;
+  const raw = (await generateJson(prompt, settings)) as { sentences?: unknown };
+  const list = arr(raw?.sentences)
+    .map((s) => ({ en: str(s.en, 300), fr: str(s.fr, 300), verb: str(s.verb, 40) }))
+    .filter((s) => s.en && s.fr)
+    .slice(0, count);
+  if (!list.length) throw new Error("The AI returned no sentences — try again.");
+  return list;
+}
+
+export interface WritingFeedback {
+  isCorrect: boolean;
+  corrected: string;
+  fixes: { wrong: string; right: string; why: string }[];
+  encouragement: string;
+  richer: string;
+  richerEn: string;
+}
+
+export async function correctWriting(
+  input: { question: string; answer: string; profile: Profile },
+  settings: AiSettings
+): Promise<WritingFeedback> {
+  const prompt = `${LEARNER_CONTEXT}
+
+The learner answered a question in French about their own life.
+Question: "${input.question}"
+Their answer: "${input.answer}"
+
+Some context about them (only use it to understand what they meant):
+${profileText(input.profile)}
+
+Correct their French. Keep their meaning and their words where possible; only fix real mistakes (spelling, accents, gender, agreement, verb forms, word order, missing words). Don't rewrite correct French into something fancier.
+
+Return ONLY valid JSON:
+{
+  "isCorrect": true or false,
+  "corrected": "their answer with mistakes fixed (identical to theirs if it was already correct)",
+  "fixes": [ { "wrong": "what they wrote", "right": "the fix", "why": "very short beginner-level reason" } ],
+  "encouragement": "one short, warm sentence in English",
+  "richer": "a slightly longer, natural version they could say next time, still beginner level, in French",
+  "richerEn": "English translation of richer"
+}`;
+  const raw = (await generateJson(prompt, settings)) as Record<string, unknown>;
+  const corrected = str(raw?.corrected, 1000);
+  if (!corrected) throw new Error("The AI returned nothing usable — try again.");
+  return {
+    isCorrect: raw.isCorrect === true,
+    corrected,
+    fixes: arr(raw.fixes)
+      .map((f) => ({ wrong: str(f.wrong, 200), right: str(f.right, 200), why: str(f.why, 300) }))
+      .filter((f) => f.wrong || f.right)
+      .slice(0, 10),
+    encouragement: str(raw.encouragement, 300),
+    richer: str(raw.richer, 600),
+    richerEn: str(raw.richerEn, 600),
+  };
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BookA, Brain, Check, ChevronRight, Crosshair, Flame, PartyPopper, Sparkles } from "lucide-react";
+import { BookA, BookOpen, Brain, Check, ChevronRight, Crosshair, Flame, MessageCircle, PartyPopper, Sparkles } from "lucide-react";
 import { VERB_BY_KEY, TENSE_BY_ID } from "@/lib/conjugate";
 import { isDue } from "@/lib/srs";
 import { buildSmartSession, buildTypedSession, unseenGroups, type SessionItem } from "@/lib/verbDrill";
@@ -14,6 +14,8 @@ import { Button, Card } from "../ui";
 import { ReviewSession, buildWordSession, type Session as WordSession } from "../ReviewTab";
 import { VerbSession } from "../verbs/VerbSession";
 import { MistakeRedo, buildRedoItems, type RedoItem } from "./MistakeRedo";
+import { AboutYou } from "./AboutYou";
+import type { AboutMe, GrammarScores } from "@/lib/useSyncedDoc";
 
 const WORDS_PER_DAY = 10;
 const VERBS_PER_DAY = 10;
@@ -22,7 +24,8 @@ type View =
   | { kind: "home" }
   | { kind: "verbs"; items: SessionItem[]; title: string; step?: StepId }
   | { kind: "words"; session: WordSession; step?: StepId }
-  | { kind: "redo"; items: RedoItem[]; step?: StepId };
+  | { kind: "redo"; items: RedoItem[]; step?: StepId }
+  | { kind: "about" };
 
 interface Step {
   id: StepId;
@@ -39,12 +42,20 @@ export function TodayTab({
   settings,
   plan,
   onGo,
+  grammar,
+  onOpenGrammar,
+  about,
+  saveAbout,
 }: {
   data: StudyData;
   lab: VerbLab;
   settings: Settings;
   plan: { done: StepId[]; markDone: (s: StepId) => void };
-  onGo: (tab: "verbs" | "words" | "mistakes") => void;
+  onGo: (tab: "verbs" | "words" | "mistakes" | "grammar") => void;
+  grammar: GrammarScores;
+  onOpenGrammar: (topic: string) => void;
+  about: AboutMe;
+  saveAbout: (a: AboutMe) => void;
 }) {
   const [view, setView] = useState<View>({ kind: "home" });
   const home = () => {
@@ -53,8 +64,8 @@ export function TodayTab({
   };
 
   const spots = useMemo(
-    () => findWeakSpots({ cells: lab.cells, words: data.words, mistakes: data.mistakes }),
-    [lab.cells, data.words, data.mistakes]
+    () => findWeakSpots({ cells: lab.cells, words: data.words, mistakes: data.mistakes, grammar }),
+    [lab.cells, data.words, data.mistakes, grammar]
   );
   const dueWords = useMemo(
     () => data.words.filter((w) => isDue(w)).sort((a, b) => a.nextReviewAt - b.nextReviewAt),
@@ -69,6 +80,8 @@ export function TodayTab({
       setView({ kind: "words", session: buildWordSession(words, settings.direction, true), step });
     } else if (action.type === "mistakes") {
       setView({ kind: "redo", items: buildRedoItems(data.mistakes, action.kind), step });
+    } else if (action.type === "grammar") {
+      onOpenGrammar(action.topic);
     } else {
       const refs = cellsForAction(action, lab.cells, lab.prefs);
       setView({ kind: "verbs", items: buildTypedSession(refs, lab.prefs), title, step });
@@ -76,8 +89,10 @@ export function TodayTab({
   }
 
   // ---- Today's three steps ----------------------------------------------
-  const focus: { title: string; detail: string; run: () => void } | null = spots[0]
-    ? { title: `Focus: ${spots[0].title}`, detail: spots[0].detail, run: () => runAction(spots[0].action, spots[0].title, "focus") }
+  // The focus step is a drill you can finish, so skip "re-read this sheet" spots.
+  const focusSpot = spots.find((s) => s.action.type !== "grammar");
+  const focus: { title: string; detail: string; run: () => void } | null = focusSpot
+    ? { title: `Focus: ${focusSpot.title}`, detail: focusSpot.detail, run: () => runAction(focusSpot.action, focusSpot.title, "focus") }
     : redoable.length
       ? {
           title: "Redo your Duolingo mistakes",
@@ -162,6 +177,10 @@ export function TodayTab({
         settings={settings}
         exitLabel="Back to Today"
       />
+    );
+  if (view.kind === "about")
+    return (
+      <AboutYou profile={about} saveProfile={saveAbout} prefs={lab.prefs} settings={settings} onStudied={data.markStudied} onBack={home} />
     );
   if (view.kind === "redo")
     return (
@@ -259,16 +278,39 @@ export function TodayTab({
         ) : (
           <ul className="mt-3 space-y-2">
             {spots.slice(0, 5).map((s) => (
-              <WeakRow key={s.id} spot={s} onRun={() => runAction(s.action, s.title, s === spots[0] ? "focus" : undefined)} />
+              <WeakRow
+                key={s.id}
+                spot={s}
+                onRun={() => runAction(s.action, s.title, s === focusSpot ? "focus" : undefined)}
+                onSheet={s.topic && s.action.type !== "grammar" ? () => onOpenGrammar(s.topic!) : undefined}
+              />
             ))}
           </ul>
         )}
       </Card>
 
+      <button
+        onClick={() => setView({ kind: "about" })}
+        className="flex w-full items-center gap-3 rounded-2xl border border-line bg-surface p-4 text-left hover:bg-surface-2"
+      >
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary-soft text-primary">
+          <MessageCircle className="size-5" aria-hidden />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-semibold">Talk about your life</span>
+          <span className="block text-sm text-muted">
+            {Object.values(about).some(Boolean)
+              ? "Sentences about you, and short answers with corrections."
+              : "Tell the app a little about you, and get practice sentences that are actually about your life."}
+          </span>
+        </span>
+        <ChevronRight className="size-4 shrink-0 text-muted" aria-hidden />
+      </button>
+
       <div className="grid gap-2 sm:grid-cols-3">
         <QuickLink label="All verbs" onClick={() => onGo("verbs")} />
         <QuickLink label="Look up words" onClick={() => onGo("words")} />
-        <QuickLink label="Explain a mistake" onClick={() => onGo("mistakes")} />
+        <QuickLink label="Grammar" onClick={() => onGo("grammar")} />
       </div>
     </div>
   );
@@ -290,9 +332,10 @@ const SOURCE: Record<WeakSpot["source"], { label: string; cls: string }> = {
   verbs: { label: "verbs", cls: "bg-primary-soft text-primary" },
   words: { label: "words", cls: "bg-good-soft text-good" },
   mistakes: { label: "Duolingo", cls: "bg-warn-soft text-warn" },
+  grammar: { label: "grammar", cls: "bg-fem-soft text-fem" },
 };
 
-function WeakRow({ spot, onRun }: { spot: WeakSpot; onRun: () => void }) {
+function WeakRow({ spot, onRun, onSheet }: { spot: WeakSpot; onRun: () => void; onSheet?: () => void }) {
   return (
     <li className="flex items-center gap-3 rounded-xl bg-surface-2 px-3.5 py-3">
       <div className="min-w-0 flex-1">
@@ -301,9 +344,22 @@ function WeakRow({ spot, onRun }: { spot: WeakSpot; onRun: () => void }) {
           <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${SOURCE[spot.source].cls}`}>{SOURCE[spot.source].label}</span>
         </p>
         <p className="text-sm text-muted">{spot.detail}</p>
+        {onSheet && (
+          <button onClick={onSheet} className="mt-1 inline-flex items-center gap-1 text-sm font-semibold text-primary">
+            <BookOpen className="size-3.5" aria-hidden /> Read the cheat sheet
+          </button>
+        )}
       </div>
       <Button variant="secondary" className="shrink-0 !px-3 !py-2" onClick={onRun}>
-        <Sparkles className="size-4" aria-hidden /> Drill
+        {spot.action.type === "grammar" ? (
+          <>
+            <BookOpen className="size-4" aria-hidden /> Open
+          </>
+        ) : (
+          <>
+            <Sparkles className="size-4" aria-hidden /> Drill
+          </>
+        )}
       </Button>
     </li>
   );

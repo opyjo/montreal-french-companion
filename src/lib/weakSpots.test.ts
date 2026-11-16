@@ -66,3 +66,15 @@ test("sentence checking", () => {
   assert.deepEqual(r.words.filter((w) => w.missed).map((w) => w.text), ["La", "une"]);
   assert.equal(checkSentence("j’aime l’eau", "J'aime l'eau.").verdict, "correct");
 });
+
+test("failed grammar quizzes become weak spots; mistakes link to cheat sheets", () => {
+  const m = (kind: Mistake["kind"]) => ({ kind } as Mistake);
+  const spots = findWeakSpots({
+    cells: {}, words: [], mistakes: [m("article"), m("article")],
+    grammar: { scores: { negation: { best: 2, last: 2, total: 5 }, numbers: { best: 5, last: 5, total: 5 } } },
+  });
+  const g = spots.find((s) => s.id === "grammar-negation");
+  assert.ok(g && g.action.type === "grammar");
+  assert.ok(!spots.some((s) => s.id === "grammar-numbers"));
+  assert.equal(spots.find((s) => s.id === "mistakes-article")?.topic, "articles");
+});

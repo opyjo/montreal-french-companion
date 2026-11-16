@@ -1,6 +1,8 @@
 import { ALL_VERBS, PERSONS, TENSES, TENSE_BY_ID, VERB_BY_KEY, auxiliary, type Tense } from "./conjugate";
 import type { VerbCell, VerbPrefs, CellRef } from "./verbDrill";
 import { MISTAKE_LABELS, type Mistake, type MistakeKind, type Word } from "./types";
+import { GRAMMAR_BY_ID, TOPIC_FOR_MISTAKE } from "@/data/grammar";
+import type { GrammarScores } from "./useSyncedDoc";
 
 /**
  * Weak spots = patterns in what you get wrong, across verb drills, word
@@ -12,15 +14,17 @@ export type WeakAction =
   | { type: "verb-tense"; tense: Tense; etreOnly?: boolean }
   | { type: "verb"; verb: string }
   | { type: "words"; ids: string[] }
-  | { type: "mistakes"; kind: MistakeKind };
+  | { type: "mistakes"; kind: MistakeKind }
+  | { type: "grammar"; topic: string };
 
 export interface WeakSpot {
   id: string;
   title: string;
   detail: string;
-  source: "verbs" | "words" | "mistakes";
+  source: "verbs" | "words" | "mistakes" | "grammar";
   score: number; // higher = more urgent
   action: WeakAction;
+  topic?: string; // a grammar cheat sheet that explains it
 }
 
 const PERSON_LABEL = ["je forms", "tu forms", "il/elle/on forms", "nous forms", "vous forms", "ils/elles forms"];
@@ -54,6 +58,7 @@ export function findWeakSpots(input: {
   cells: Record<string, VerbCell>;
   words: Word[];
   mistakes: Mistake[];
+  grammar?: GrammarScores;
 }): WeakSpot[] {
   const spots: WeakSpot[] = [];
   const cells = Object.values(input.cells).filter((c) => VERB_BY_KEY[c.verb]);
@@ -163,6 +168,20 @@ export function findWeakSpots(input: {
         source: "mistakes",
         score: n * 2,
         action: { type: "mistakes", kind },
+        topic: TOPIC_FOR_MISTAKE[kind],
+      });
+
+  // ---- Grammar quizzes you haven't passed yet -------------------------
+  for (const [id, s] of Object.entries(input.grammar?.scores ?? {}))
+    if (GRAMMAR_BY_ID[id] && s.total > 0 && s.best / s.total < 0.6)
+      spots.push({
+        id: `grammar-${id}`,
+        title: GRAMMAR_BY_ID[id].title,
+        detail: `Best quiz score ${s.best}/${s.total}. Re-read the cheat sheet and try the quiz again.`,
+        source: "grammar",
+        score: (s.total - s.best) * 1.5,
+        action: { type: "grammar", topic: id },
+        topic: id,
       });
 
   return spots.sort((a, b) => b.score - a.score);

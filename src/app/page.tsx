@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BookA, Cloud, CloudOff, Flame, Library, Settings as SettingsIcon, Sparkles, Sun } from "lucide-react";
+import { BookA, Cloud, CloudOff, Flame, GraduationCap, Library, Settings as SettingsIcon, Sparkles, Sun } from "lucide-react";
 import { isDue } from "@/lib/srs";
 import { useStudyData } from "@/lib/useStudyData";
 import { useSettings } from "@/lib/useSettings";
 import { useVerbLab } from "@/lib/useVerbLab";
 import { useDailyPlan } from "@/lib/useDailyPlan";
+import { EMPTY_ABOUT, cleanAboutMe, cleanGrammarScores, useSyncedDoc } from "@/lib/useSyncedDoc";
+import { GrammarTab } from "@/components/grammar/GrammarTab";
 import { TodayTab } from "@/components/today/TodayTab";
 import { VerbsTab } from "@/components/verbs/VerbsTab";
 import { WordsHub, type WordsView } from "@/components/WordsHub";
@@ -14,12 +16,13 @@ import { type LookupState } from "@/components/LookupTab";
 import { MistakeTab, type MistakeFormState } from "@/components/MistakeTab";
 import { SettingsPanel } from "@/components/SettingsPanel";
 
-type Tab = "today" | "verbs" | "words" | "mistakes";
+type Tab = "today" | "verbs" | "words" | "grammar" | "mistakes";
 
 const TABS: { id: Tab; label: string; Icon: typeof Sun }[] = [
   { id: "today", label: "Today", Icon: Sun },
   { id: "verbs", label: "Verbs", Icon: BookA },
   { id: "words", label: "Words", Icon: Library },
+  { id: "grammar", label: "Grammar", Icon: GraduationCap },
   { id: "mistakes", label: "Mistakes", Icon: Sparkles },
 ];
 
@@ -28,6 +31,10 @@ export default function Home() {
   const lab = useVerbLab(data.user, data.mode === "cloud", data.markStudied);
   const plan = useDailyPlan(data.user, data.mode === "cloud");
   const { settings, update } = useSettings();
+  const cloud = data.mode === "cloud";
+  const [grammar, saveGrammar] = useSyncedDoc(data.user, cloud, "grammar", { scores: {} }, cleanGrammarScores);
+  const [about, saveAbout] = useSyncedDoc(data.user, cloud, "aboutMe", EMPTY_ABOUT, cleanAboutMe);
+  const [grammarTopic, setGrammarTopic] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("today");
   const [wordsView, setWordsView] = useState<WordsView>("review");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -135,8 +142,16 @@ export default function Home() {
             plan={plan}
             onGo={(t) => {
               if (t === "words") setWordsView("lookup");
+              if (t === "grammar") setGrammarTopic(null);
               go(t);
             }}
+            grammar={grammar}
+            onOpenGrammar={(topic) => {
+              setGrammarTopic(topic);
+              go("grammar");
+            }}
+            about={about}
+            saveAbout={saveAbout}
           />
         )}
         {tab === "verbs" && <VerbsTab lab={lab} settings={settings} />}
@@ -150,6 +165,16 @@ export default function Home() {
             lookup={lookup}
             setLookup={setLookup}
             dueCount={dueCount}
+          />
+        )}
+        {tab === "grammar" && (
+          <GrammarTab
+            settings={settings}
+            scores={grammar}
+            saveScores={saveGrammar}
+            openTopic={grammarTopic}
+            setOpenTopic={setGrammarTopic}
+            onStudied={data.markStudied}
           />
         )}
         {tab === "mistakes" && <MistakeTab data={data} settings={settings} state={mistake} setState={setMistake} />}
